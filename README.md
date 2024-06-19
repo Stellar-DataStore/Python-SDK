@@ -339,6 +339,7 @@ Each normal call you make wil return a `Data Response` class which contains the 
     * type
 * is_succes
 * status_code
+* count
 
 When making a call for a `Blob` you will get a `Blob Response` class with this information:
 
