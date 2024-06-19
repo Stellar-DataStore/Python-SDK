@@ -99,6 +99,7 @@ def _process_response(response, response_class):
         #print("\n", response.content)
         json_data = {"data": {"bytes": response.content}} if response.status_code == 200 else response.json()
     return response_class(
+        count=json_data.get("count"),
         data=json_data.get("data", {}),
         messages=json_data.get("messages", []),
         isSuccess=json_data.get("isSuccess"),
@@ -607,6 +608,10 @@ class FieldResponse(BaseResponse):
             super().__init__(id=id, name=name, type=type)
 
 class DataResponse(BaseResponse):
+    def __init__(self, data, messages, count=None, isSuccess=None, statusCode=None):
+        super().__init__(data, messages, isSuccess, statusCode)
+        self.count = count
+
     class Data(BaseResponse.Data):
         def __init__(self, id=None, **extra):
             super().__init__(id=id, **extra)
@@ -638,8 +643,8 @@ class DataQueries:
         self.Offset, self.Take, self.JoinQuery, self.WhereQuery, self.SortQuery = Offset, Take, JoinQuery, WhereQuery, SortQuery
 
 class RecordList:
-	def __init__(self, id):
-		self.id = id
+    def __init__(self, id):
+        self.id = id
 
 class User:
     def __init__(self, username=None, email=None, emailCallbackUrl=None, password=None):
