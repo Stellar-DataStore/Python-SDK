@@ -1,0 +1,1303 @@
+"""The resource groups of the synchronous client.
+
+This file is the single source of every API call. ``stellards/_async/resources.py`` is generated from it by
+``scripts/generate_async.py`` (a test fails when the two drift apart), so edit this file and regenerate.
+"""
+
+from __future__ import annotations
+
+import builtins
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from typing import IO, Any, Callable, TypeVar, Union, overload
+from urllib.parse import quote
+
+from .._core import ApiRequest, ProjectId, SyncCore
+from ..field_types import FieldType, FieldTypeLike
+from ..filters import SortLike, WhereLike, select_query, sort_query
+from ..models import (
+    AccessToken,
+    Account,
+    AuditLog,
+    CreatedAccessToken,
+    Field,
+    Invitation,
+    Model,
+    OAuthClient,
+    OAuthDesign,
+    Permission,
+    Procedure,
+    ProcedureParameter,
+    ProcedureResult,
+    ProcedureStep,
+    Project,
+    ProjectLogEntry,
+    ProjectTier,
+    QueryResult,
+    RecordPage,
+    Relation,
+    RelationCheck,
+    Role,
+    RoleMatrix,
+    RoleMatrixRoleUpdate,
+    RolePermissions,
+    Table,
+    TablePermissionDetails,
+    TablePermissions,
+    TablePosition,
+    TableRoles,
+    Tokens,
+    TopLevelRole,
+    UserList,
+    Webhook,
+    WebhookDelivery,
+    WebhookWithSecret,
+)
+
+__all__ = [
+    "Projects",
+    "Tables",
+    "Fields",
+    "Records",
+    "Query",
+    "Procedures",
+    "Relations",
+    "Roles",
+    "Permissions",
+    "Audit",
+    "Webhooks",
+    "Users",
+    "Applications",
+    "ProjectTiers",
+    "OAuth",
+]
+
+T = TypeVar("T")
+M = TypeVar("M", bound=Model)
+Record = dict[str, Any]
+StepLike = Union[ProcedureStep, Mapping[str, Any], tuple[str, str]]
+ParameterLike = Union[ProcedureParameter, Mapping[str, Any]]
+
+
+# --------------------------------------------------------------------------------------------------- parsers
+
+
+def _one(cls: type[M]) -> Callable[[Any], M]:
+    def parse(data: Any) -> M:
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        return cls.from_dict(data)
+
+    return parse
+
+
+def _many(cls: type[M]) -> Callable[[Any], list[M]]:
+    def parse(data: Any) -> builtins.list[M]:
+        if data is None:
+            return []
+        if isinstance(data, Mapping):
+            return [cls.from_dict(data)]
+        return [cls.from_dict(item) for item in data]
+
+    return parse
+
+
+def _none(_: Any) -> None:
+    return None
+
+
+def _records(data: Any) -> builtins.list[Record]:
+    if data is None:
+        return []
+    if isinstance(data, Mapping):
+        return [dict(data)]
+    return [dict(item) for item in data]
+
+
+def _record_page(body: Any) -> RecordPage:
+    if not isinstance(body, Mapping):
+        return RecordPage(_records(body), len(_records(body)))
+    records = _records(body.get("data"))
+    count = body.get("count")
+    return RecordPage(records, count if isinstance(count, int) else len(records))
+
+
+def _int_value(data: Any) -> int:
+    if isinstance(data, Mapping):
+        data = data.get("count", data.get("total", 0))
+    try:
+        return int(data)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _matching(cls: type[M], key: str, wanted: Any) -> Callable[[Any], M]:
+    """For updates that return a whole list: picks the updated object."""
+
+    def parse(data: Any) -> M:
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, Mapping) and str(item.get(key)) == str(wanted):
+                    return cls.from_dict(item)
+            data = data[0] if data else {}
+        return cls.from_dict(data)
+
+    return parse
+
+
+def _to_dict(value: Any) -> Any:
+    to_dict = getattr(value, "to_dict", None)
+    return to_dict() if callable(to_dict) else value
+
+
+def _step(step: StepLike) -> Any:
+    if isinstance(step, tuple):
+        name, sql = step
+        return {"name": name, "sql": sql}
+    return _to_dict(step)
+
+
+def _path(value: Any) -> str:
+    return quote(str(value), safe="")
+
+
+def _span(value: Any) -> int:
+    return int(getattr(value, "value", value))
+
+
+# --------------------------------------------------------------------------------------------------- base
+
+
+class _Resource:
+    def __init__(self, core: SyncCore) -> None:
+        self._core = core
+
+    def _project(self, project: ProjectId | None) -> str:
+        value = project if project is not None else self._core.project
+        if value is None:
+            raise ValueError("pass project=... or set a default with StellarDS(..., project=...)")
+        return str(value)
+
+    def _request(self, request: ApiRequest[T]) -> T:
+        return self._core.request(request)
+
+
+# --------------------------------------------------------------------------------------------------- projects
+
+
+class Projects(_Resource):
+    """Projects: ``/v1/schema/project``."""
+
+    def list(self) -> builtins.list[Project]:
+        """Every project you have access to."""
+        return self._request(ApiRequest("GET", "/v1/schema/project", parse=_many(Project)))
+
+    def get(self, project: ProjectId | None = None) -> Project:
+        """One project (the client's default project when ``project`` is left out)."""
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/schema/project", params=params, parse=_one(Project)))
+
+    def create(
+        self, name: str, *, description: str | None = None, is_multitenant: bool = False, allow_new_users: bool = False
+    ) -> Project:
+        """Creates a project (management application tokens only)."""
+        body = {
+            "name": name,
+            "description": description,
+            "isMultitenant": is_multitenant,
+            "allowNewUsers": allow_new_users,
+        }
+        return self._request(ApiRequest("POST", "/v1/schema/project", json=body, parse=_one(Project)))
+
+    def update(
+        self,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        is_multitenant: bool | None = None,
+        allow_new_users: bool | None = None,
+        project: ProjectId | None = None,
+    ) -> Project:
+        """Changes a project. Settings left out keep their current value."""
+        project_id = self._project(project)
+        if name is None or description is None or is_multitenant is None or allow_new_users is None:
+            current = self.get(project_id)
+            name = current.name if name is None else name
+            description = current.description if description is None else description
+            is_multitenant = current.is_multitenant if is_multitenant is None else is_multitenant
+            allow_new_users = current.allow_new_users if allow_new_users is None else allow_new_users
+        body = {
+            "name": name,
+            "description": description,
+            "isMultitenant": is_multitenant,
+            "allowNewUsers": allow_new_users,
+        }
+        return self._request(
+            ApiRequest(
+                "PUT",
+                "/v1/schema/project",
+                params={"project": project_id},
+                json=body,
+                parse=_matching(Project, "id", project_id),
+            )
+        )
+
+    def delete(self, project: ProjectId | None = None, *, owner_id: str | None = None) -> None:
+        """Deletes a project and all its data (management application tokens only)."""
+        params = {"project": self._project(project), "ownerId": owner_id}
+        self._request(ApiRequest("DELETE", "/v1/schema/project", params=params, parse=_none))
+
+    def users(
+        self,
+        *,
+        sort_by: str | None = None,
+        sort_type: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+        project: ProjectId | None = None,
+    ) -> UserList:
+        """The project's members."""
+        params = {
+            "project": self._project(project),
+            "sortBy": sort_by,
+            "sortType": sort_type,
+            "page": page,
+            "pageSize": page_size,
+        }
+        return self._request(ApiRequest("GET", "/v1/schema/project/users", params=params, parse=_one(UserList)))
+
+    def user_count(self, *, project: ProjectId | None = None) -> int:
+        """How many members the project has."""
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/schema/project/user-count", params=params, parse=_int_value))
+
+    def invited_users(
+        self,
+        *,
+        sort_by: str | None = None,
+        sort_type: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+        project: ProjectId | None = None,
+    ) -> builtins.list[Invitation]:
+        """Open invitations to the project."""
+        params = {
+            "project": self._project(project),
+            "sortBy": sort_by,
+            "sortType": sort_type,
+            "page": page,
+            "pageSize": page_size,
+        }
+        return self._request(
+            ApiRequest("GET", "/v1/schema/project/invited-users", params=params, parse=_many(Invitation))
+        )
+
+    def app_access(self) -> builtins.list[Project]:
+        """The projects you may open in the management application."""
+        return self._request(ApiRequest("GET", "/v1/schema/project/app-access", parse=_many(Project)))
+
+    def log(self, log_date: Any, *, project: ProjectId | None = None) -> builtins.list[ProjectLogEntry]:
+        """The API requests made to the project on ``log_date`` (a ``datetime.date`` or ``datetime``)."""
+        params = {"id": self._project(project), "logDate": log_date}
+        return self._request(
+            ApiRequest("GET", "/v1/schema/project/project-log", params=params, parse=_many(ProjectLogEntry))
+        )
+
+    def get_oauth_design(self, *, project: ProjectId | None = None) -> OAuthDesign:
+        """How the sign-in page of the project's OAuth clients looks."""
+        params = {"projectid": self._project(project)}
+        return self._request(
+            ApiRequest("GET", "/v1/schema/project/oauth-design", params=params, parse=_one(OAuthDesign))
+        )
+
+    def update_oauth_design(
+        self, design: OAuthDesign | Mapping[str, Any], *, design_id: str, project: ProjectId | None = None
+    ) -> OAuthDesign:
+        """Saves the sign-in page design ``design_id`` (the ``id`` of :meth:`get_oauth_design`)."""
+        project_id = self._project(project)
+        body = dict(_to_dict(design))
+        body["projectId"] = body.get("projectId") or project_id
+        return self._request(
+            ApiRequest(
+                "POST",
+                "/v1/schema/project/oauth-design",
+                params={"id": design_id, "project": project_id},
+                json=body,
+                parse=_one(OAuthDesign),
+            )
+        )
+
+
+# --------------------------------------------------------------------------------------------------- tables
+
+
+class Tables(_Resource):
+    """Tables: ``/v1/schema/table``."""
+
+    def list(self, *, project: ProjectId | None = None) -> builtins.list[Table]:
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/schema/table", params=params, parse=_many(Table)))
+
+    def get(self, table: int | str, *, project: ProjectId | None = None) -> Table:
+        """One table, by id."""
+        params = {"project": self._project(project), "table": table}
+        return self._request(ApiRequest("GET", "/v1/schema/table", params=params, parse=_one(Table)))
+
+    def create(
+        self,
+        name: str,
+        *,
+        description: str | None = None,
+        is_multitenant: bool = False,
+        project: ProjectId | None = None,
+    ) -> Table:
+        params = {"project": self._project(project)}
+        body = {"name": name, "description": description, "isMultitenant": is_multitenant}
+        return self._request(ApiRequest("POST", "/v1/schema/table", params=params, json=body, parse=_one(Table)))
+
+    def update(
+        self,
+        table: int,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        is_multitenant: bool | None = None,
+        project: ProjectId | None = None,
+    ) -> Table:
+        """Changes a table. Settings left out keep their current value."""
+        project_id = self._project(project)
+        if name is None or description is None or is_multitenant is None:
+            current = self.get(table, project=project_id)
+            name = current.name if name is None else name
+            description = current.description if description is None else description
+            is_multitenant = current.is_multitenant if is_multitenant is None else is_multitenant
+        body = {"name": name, "description": description, "isMultitenant": is_multitenant}
+        return self._request(
+            ApiRequest(
+                "PUT",
+                "/v1/schema/table",
+                params={"project": project_id, "table": table},
+                json=body,
+                parse=_matching(Table, "id", table),
+            )
+        )
+
+    def delete(self, table: int, *, project: ProjectId | None = None) -> None:
+        """Deletes a table and all its records."""
+        params = {"project": self._project(project), "table": table}
+        self._request(ApiRequest("DELETE", "/v1/schema/table", params=params, parse=_none))
+
+
+# --------------------------------------------------------------------------------------------------- fields
+
+
+def _type_and_options(
+    type_: FieldTypeLike | None, options: Sequence[str] | None
+) -> tuple[str | None, list[str] | None]:
+    if isinstance(type_, FieldType):
+        chosen = options if options is not None else type_.options
+        return type_.type, None if chosen is None else list(chosen)
+    return type_, None if options is None else list(options)
+
+
+class Fields(_Resource):
+    """Fields of a table: ``/v1/schema/table/field``."""
+
+    def list(self, table: int, *, project: ProjectId | None = None) -> builtins.list[Field]:
+        params = {"project": self._project(project), "table": table}
+        return self._request(ApiRequest("GET", "/v1/schema/table/field", params=params, parse=_many(Field)))
+
+    def get(self, table: int, field: int, *, project: ProjectId | None = None) -> Field:
+        params = {"project": self._project(project), "table": table, "field": field}
+        return self._request(ApiRequest("GET", "/v1/schema/table/field", params=params, parse=_one(Field)))
+
+    def create(
+        self,
+        table: int,
+        name: str,
+        type: FieldTypeLike,
+        *,
+        options: Sequence[str] | None = None,
+        project: ProjectId | None = None,
+    ) -> Field:
+        """Adds a field. ``type`` is a :class:`~stellards.FieldType` or a type string such as ``"Int"``."""
+        type_text, option_list = _type_and_options(type, options)
+        body: dict[str, Any] = {"name": name, "type": type_text}
+        if option_list is not None:
+            body["options"] = option_list
+        params = {"project": self._project(project), "table": table}
+        return self._request(ApiRequest("POST", "/v1/schema/table/field", params=params, json=body, parse=_one(Field)))
+
+    def update(
+        self,
+        table: int,
+        field: int,
+        *,
+        name: str | None = None,
+        type: FieldTypeLike | None = None,
+        options: Sequence[str] | None = None,
+        replace_options: Mapping[str, str | None] | None = None,
+        project: ProjectId | None = None,
+    ) -> Field:
+        """Changes a field. Settings left out keep their current value.
+
+        For an Enum field, ``options`` replaces its allowed values; ``replace_options`` maps each removed value to
+        its replacement (``None`` clears it) in records that use it. Without a replacement the server refuses to
+        remove a value that records still use.
+        """
+        project_id = self._project(project)
+        type_text, option_list = _type_and_options(type, options)
+        if name is None or type_text is None:
+            current = self.get(table, field, project=project_id)
+            name = current.name if name is None else name
+            type_text = current.type if type_text is None else type_text
+        body: dict[str, Any] = {"name": name, "type": type_text}
+        if option_list is not None:
+            body["options"] = option_list
+        if replace_options is not None:
+            body["replaceOptions"] = dict(replace_options)
+        params = {"project": project_id, "table": table, "field": field}
+        return self._request(ApiRequest("PUT", "/v1/schema/table/field", params=params, json=body, parse=_one(Field)))
+
+    def delete(self, table: int, field: int, *, project: ProjectId | None = None) -> None:
+        params = {"project": self._project(project), "table": table, "field": field}
+        self._request(ApiRequest("DELETE", "/v1/schema/table/field", params=params, parse=_none))
+
+
+# --------------------------------------------------------------------------------------------------- records
+
+
+def _query_params(
+    project: str,
+    table: int,
+    where: WhereLike | None,
+    join: str | Sequence[str] | None,
+    sort: SortLike | None,
+    offset: int | None,
+    take: int | None,
+    distinct: bool,
+    select: str | Iterable[str] | None,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"project": project, "table": table, "Offset": offset, "Take": take}
+    if where is not None and str(where):
+        params["WhereQuery"] = str(where)
+    if join is not None:
+        params["JoinQuery"] = join if isinstance(join, str) else "&".join(join)
+    if sort is not None:
+        params["SortQuery"] = sort_query(sort)
+    if distinct:
+        params["distinct"] = True
+    if select is not None:
+        params["select"] = select_query(select)
+    return params
+
+
+class Records(_Resource):
+    """Records of a table: ``/v1/data/table``. Records are plain dicts keyed by field name."""
+
+    def query(
+        self,
+        table: int,
+        *,
+        where: WhereLike | None = None,
+        join: str | Sequence[str] | None = None,
+        sort: SortLike | None = None,
+        offset: int | None = None,
+        take: int | None = None,
+        distinct: bool = False,
+        select: str | Iterable[str] | None = None,
+        project: ProjectId | None = None,
+    ) -> RecordPage:
+        """One page of records and the total count of matching records.
+
+        ``where`` is built with :func:`stellards.where` (or raw StellarDS syntax), ``sort`` is e.g. ``"-createdAt"``
+        and ``select`` a list of field names.
+        """
+        params = _query_params(self._project(project), table, where, join, sort, offset, take, distinct, select)
+        return self._request(ApiRequest("GET", "/v1/data/table", params=params, parse=_record_page, unwrap=False))
+
+    def iter(
+        self,
+        table: int,
+        *,
+        where: WhereLike | None = None,
+        join: str | Sequence[str] | None = None,
+        sort: SortLike | None = None,
+        select: str | Iterable[str] | None = None,
+        distinct: bool = False,
+        page_size: int = 100,
+        project: ProjectId | None = None,
+    ) -> Iterator[Record]:
+        """Every matching record, fetching ``page_size`` records per request."""
+        if page_size < 1:
+            raise ValueError("page_size must be at least 1")
+        project_id = self._project(project)
+        offset = 0
+        while True:
+            page = self.query(
+                table,
+                where=where,
+                join=join,
+                sort=sort,
+                select=select,
+                distinct=distinct,
+                offset=offset,
+                take=page_size,
+                project=project_id,
+            )
+            for record in page.records:  # noqa: UP028 - `yield from` isn't allowed in the async version
+                yield record
+            offset += len(page.records)
+            if not page.records or offset >= page.count:
+                return
+
+    def get(self, table: int, record: int, *, project: ProjectId | None = None) -> Record | None:
+        """The record with id ``record``, or ``None`` when there is none."""
+        page = self.query(table, where=f"id;equal;{int(record)}", take=1, project=project)
+        return page.records[0] if page.records else None
+
+    @overload
+    def create(self, table: int, records: Mapping[str, Any], *, project: ProjectId | None = None) -> Record: ...
+
+    @overload
+    def create(
+        self, table: int, records: Sequence[Mapping[str, Any]], *, project: ProjectId | None = None
+    ) -> builtins.list[Record]: ...
+
+    def create(
+        self,
+        table: int,
+        records: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        project: ProjectId | None = None,
+    ) -> Record | list[Record]:
+        """Inserts one record (a dict, returns the created record) or many (a list, returns a list).
+
+        Values may be native Python types: ``Decimal``, ``date``, ``time``, ``datetime`` and ``UUID`` are sent in
+        StellarDS's wire formats.
+        """
+        single = isinstance(records, Mapping)
+        items = [records] if isinstance(records, Mapping) else list(records)
+        params = {"project": self._project(project), "table": table}
+        created = self._request(
+            ApiRequest("POST", "/v1/data/table", params=params, json={"records": items}, parse=_records)
+        )
+        if single:
+            return created[0] if created else {}
+        return created
+
+    def update(
+        self,
+        table: int,
+        values: Mapping[str, Any],
+        *,
+        ids: Sequence[int] | None = None,
+        force: bool = False,
+        project: ProjectId | None = None,
+    ) -> builtins.list[Record]:
+        """Sets ``values`` on the records ``ids`` (or on the record whose ``id`` is in ``values``).
+
+        Without ids the server refuses, unless ``force=True``: then every record of the table is updated.
+        """
+        body: dict[str, Any] = {"record": dict(values)}
+        if ids is not None:
+            body["idList"] = list(ids)
+        params = {"project": self._project(project), "table": table, "force": True if force else None}
+        return self._request(ApiRequest("PUT", "/v1/data/table", params=params, json=body, parse=_records))
+
+    def delete(self, table: int, record: int, *, project: ProjectId | None = None) -> None:
+        """Deletes one record."""
+        params = {"project": self._project(project), "table": table, "record": record}
+        self._request(ApiRequest("DELETE", "/v1/data/table", params=params, parse=_none))
+
+    def delete_many(self, table: int, records: Iterable[int], *, project: ProjectId | None = None) -> None:
+        """Deletes several records by id."""
+        ids = [str(int(r)) for r in records]  # the server reads the list as strings
+        if not ids:
+            return
+        params = {"project": self._project(project), "table": table}
+        self._request(ApiRequest("POST", "/v1/data/table/delete", params=params, json=ids, parse=_none))
+
+    def clear(self, table: int, *, project: ProjectId | None = None) -> None:
+        """Deletes every record of the table."""
+        params = {"project": self._project(project), "table": table}
+        self._request(ApiRequest("DELETE", "/v1/data/table/clear", params=params, parse=_none))
+
+    def download_blob(self, table: int, record: int, field: str, *, project: ProjectId | None = None) -> bytes:
+        """The contents of a Blob field."""
+        params = {"project": self._project(project), "table": table, "record": record, "field": field}
+        return self._request(ApiRequest("GET", "/v1/data/table/blob", params=params, raw=True, parse=bytes))
+
+    def upload_blob(
+        self,
+        table: int,
+        record: int,
+        field: str,
+        data: bytes | IO[bytes],
+        *,
+        filename: str = "blob",
+        content_type: str = "application/octet-stream",
+        project: ProjectId | None = None,
+    ) -> None:
+        """Stores ``data`` (bytes or a binary file) in a Blob field. The server accepts at most 1 MB."""
+        content = data if isinstance(data, (bytes, bytearray)) else data.read()
+        params = {"project": self._project(project), "table": table, "record": record, "field": field}
+        files = {"data": (filename, bytes(content), content_type)}
+        self._request(ApiRequest("POST", "/v1/data/table/blob", params=params, files=files, parse=_none))
+
+
+# --------------------------------------------------------------------------------------------------- query
+
+
+class Query(_Resource):
+    """Custom read-only SQL queries: ``/v1/data/query``."""
+
+    def execute(
+        self, query: str, parameters: Mapping[str, Any] | None = None, *, project: ProjectId | None = None
+    ) -> QueryResult:
+        """Runs a SELECT query written with the project's table and field names; ``@name`` refers to a parameter."""
+        body = {"query": query, "parameters": None if parameters is None else dict(parameters)}
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("POST", "/v1/data/query", params=params, json=body, parse=_one(QueryResult)))
+
+
+# --------------------------------------------------------------------------------------------------- procedures
+
+
+class Procedures(_Resource):
+    """Stored procedures: ``/v1/procedures``."""
+
+    def list(self, *, project: ProjectId | None = None) -> builtins.list[Procedure]:
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/procedures", params=params, parse=_many(Procedure)))
+
+    def get(self, name: str, *, project: ProjectId | None = None) -> Procedure:
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", f"/v1/procedures/{_path(name)}", params=params, parse=_one(Procedure)))
+
+    def create(
+        self,
+        name: str,
+        *,
+        steps: Sequence[StepLike],
+        parameters: Sequence[ParameterLike] | None = None,
+        description: str | None = None,
+        project: ProjectId | None = None,
+    ) -> Procedure:
+        """Creates a procedure. ``steps`` are ``ProcedureStep``s, dicts or ``(name, sql)`` tuples."""
+        body = {
+            "name": name,
+            "description": description,
+            "parameters": [_to_dict(p) for p in parameters or []],
+            "steps": [_step(s) for s in steps],
+        }
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("POST", "/v1/procedures", params=params, json=body, parse=_one(Procedure)))
+
+    def update(
+        self,
+        name: str,
+        *,
+        new_name: str | None = None,
+        steps: Sequence[StepLike] | None = None,
+        parameters: Sequence[ParameterLike] | None = None,
+        description: str | None = None,
+        version: int | None = None,
+        project: ProjectId | None = None,
+    ) -> Procedure:
+        """Replaces a procedure (parts left out keep their current value) and increases its version.
+
+        Pass the ``version`` you edited to get a 409 :class:`~stellards.ApiError` when someone saved a newer one.
+        """
+        project_id = self._project(project)
+        if steps is None or parameters is None or description is None:
+            current = self.get(name, project=project_id)
+            steps = current.steps if steps is None else steps
+            parameters = current.parameters if parameters is None else parameters
+            description = current.description if description is None else description
+        body = {
+            "name": new_name or name,
+            "description": description,
+            "parameters": [_to_dict(p) for p in parameters],
+            "steps": [_step(s) for s in steps],
+            "version": version,
+        }
+        return self._request(
+            ApiRequest(
+                "PUT",
+                f"/v1/procedures/{_path(name)}",
+                params={"project": project_id},
+                json=body,
+                parse=_one(Procedure),
+            )
+        )
+
+    def delete(self, name: str, *, project: ProjectId | None = None) -> None:
+        params = {"project": self._project(project)}
+        self._request(ApiRequest("DELETE", f"/v1/procedures/{_path(name)}", params=params, parse=_none))
+
+    def execute(
+        self, name: str, parameters: Mapping[str, Any] | None = None, *, project: ProjectId | None = None
+    ) -> ProcedureResult:
+        """Runs a procedure with the given parameter values."""
+        body = {"parameters": None if parameters is None else dict(parameters)}
+        params = {"project": self._project(project)}
+        return self._request(
+            ApiRequest(
+                "POST", f"/v1/procedures/{_path(name)}/execute", params=params, json=body, parse=_one(ProcedureResult)
+            )
+        )
+
+
+# --------------------------------------------------------------------------------------------------- relations
+
+
+class Relations(_Resource):
+    """Relations (foreign keys) between tables: ``/v1/schema/relation`` (management application tokens only)."""
+
+    def list(self, *, table: int | None = None, project: ProjectId | None = None) -> builtins.list[Relation]:
+        """The project's relations, optionally only those from or to ``table``."""
+        params = {"project": self._project(project), "tableId": table}
+        return self._request(ApiRequest("GET", "/v1/schema/relation", params=params, parse=_many(Relation)))
+
+    def check(self, table: int, field: int, to_table: int, *, project: ProjectId | None = None) -> RelationCheck:
+        """What linking ``field`` of ``table`` to ``to_table`` would involve, without changing anything."""
+        params = {"project": self._project(project), "table": table, "field": field, "toTable": to_table}
+        return self._request(ApiRequest("GET", "/v1/schema/relation/check", params=params, parse=_one(RelationCheck)))
+
+    def create(
+        self,
+        table: int,
+        *,
+        to_table: int,
+        on_delete: str = "Restrict",
+        from_field: int | None = None,
+        new_field_name: str | None = None,
+        name: str | None = None,
+        display_field: int | None = None,
+        convert_to_bigint: bool = False,
+        orphan_handling: str = "Abort",
+        project: ProjectId | None = None,
+    ) -> Relation:
+        """Links ``table`` to ``to_table``, through the existing field ``from_field`` or a new ``new_field_name``.
+
+        ``on_delete``: ``"Restrict"``, ``"Cascade"`` or ``"SetNull"``; ``orphan_handling``: ``"Abort"`` or
+        ``"SetNull"``.
+        """
+        body = {
+            "name": name,
+            "fromFieldId": from_field,
+            "newFieldName": new_field_name,
+            "toTableId": to_table,
+            "onDelete": on_delete,
+            "displayFieldId": display_field,
+            "convertToBigInt": convert_to_bigint,
+            "orphanHandling": orphan_handling,
+        }
+        params = {"project": self._project(project), "table": table}
+        return self._request(ApiRequest("POST", "/v1/schema/relation", params=params, json=body, parse=_one(Relation)))
+
+    def update(
+        self,
+        table: int,
+        relation: int,
+        *,
+        on_delete: str = "Restrict",
+        name: str | None = None,
+        display_field: int | None = None,
+        project: ProjectId | None = None,
+    ) -> Relation:
+        body = {"name": name, "onDelete": on_delete, "displayFieldId": display_field}
+        params = {"project": self._project(project), "table": table, "relation": relation}
+        return self._request(ApiRequest("PUT", "/v1/schema/relation", params=params, json=body, parse=_one(Relation)))
+
+    def delete(self, table: int, relation: int, *, project: ProjectId | None = None) -> None:
+        params = {"project": self._project(project), "table": table, "relation": relation}
+        self._request(ApiRequest("DELETE", "/v1/schema/relation", params=params, parse=_none))
+
+    def get_layout(self, *, project: ProjectId | None = None) -> builtins.list[TablePosition]:
+        """Where the tables sit on the canvas of the database designer."""
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/schema/relation/layout", params=params, parse=_many(TablePosition)))
+
+    def save_layout(
+        self, positions: Iterable[TablePosition | Mapping[str, Any]], *, project: ProjectId | None = None
+    ) -> builtins.list[TablePosition]:
+        """Stores the positions of the given tables; other tables keep theirs."""
+        params = {"project": self._project(project)}
+        body = [_to_dict(p) for p in positions]
+        return self._request(
+            ApiRequest("PUT", "/v1/schema/relation/layout", params=params, json=body, parse=_many(TablePosition))
+        )
+
+
+# --------------------------------------------------------------------------------------------------- roles
+
+
+class Roles(_Resource):
+    """Roles and their permissions: ``/v1/role`` (management application tokens only)."""
+
+    def list(self, *, project: ProjectId | None = None) -> builtins.list[Role]:
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/role", params=params, parse=_many(Role)))
+
+    def get(self, role: str, *, project: ProjectId | None = None) -> Role:
+        params = {"project": self._project(project), "role": role}
+        return self._request(ApiRequest("GET", "/v1/role", params=params, parse=_one(Role)))
+
+    def simple(self, *, project: ProjectId | None = None) -> builtins.list[Role]:
+        """Every role's id, name and description, without permissions."""
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/role/simple", params=params, parse=_many(Role)))
+
+    def top_level(self, role: str, *, project: ProjectId | None = None) -> TopLevelRole:
+        """A role's project-level and default table permissions, each with a description."""
+        params = {"project": self._project(project), "role": role}
+        return self._request(ApiRequest("GET", "/v1/role/top-level", params=params, parse=_one(TopLevelRole)))
+
+    def table_permissions(self, role: str, table: str, *, project: ProjectId | None = None) -> TablePermissionDetails:
+        """A role's permissions on one table (by table name)."""
+        params = {"project": self._project(project), "role": role, "table": table}
+        return self._request(ApiRequest("GET", "/v1/role/table", params=params, parse=_one(TablePermissionDetails)))
+
+    def table_roles(self, table: str, *, project: ProjectId | None = None) -> TableRoles:
+        """Every role's permissions on one table (by table name)."""
+        params = {"project": self._project(project), "tableName": table}
+        return self._request(
+            ApiRequest("GET", "/v1/role/table-role-permissions", params=params, parse=_one(TableRoles))
+        )
+
+    def template(self, *, project: ProjectId | None = None) -> Role:
+        """A new role with default permissions, as a starting point for :meth:`create`."""
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/role/template", params=params, parse=_one(Role)))
+
+    def create(
+        self,
+        name: str,
+        permissions: RolePermissions | Mapping[str, Any],
+        *,
+        description: str = "",
+        project: ProjectId | None = None,
+    ) -> Role:
+        body = {"name": name, "description": description, "permissions": _to_dict(permissions)}
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("POST", "/v1/role", params=params, json=body, parse=_one(Role)))
+
+    def update(
+        self,
+        role: str,
+        *,
+        name: str,
+        permissions: RolePermissions | Mapping[str, Any],
+        description: str = "",
+        project: ProjectId | None = None,
+    ) -> Role:
+        body = {"name": name, "description": description, "permissions": _to_dict(permissions)}
+        params = {"project": self._project(project), "role": role}
+        return self._request(ApiRequest("PUT", "/v1/role", params=params, json=body, parse=_one(Role)))
+
+    def delete(self, role: str, *, project: ProjectId | None = None) -> None:
+        params = {"project": self._project(project), "role": role}
+        self._request(ApiRequest("DELETE", "/v1/role", params=params, parse=_none))
+
+    def duplicate(self, role: str, *, name: str, description: str = "", project: ProjectId | None = None) -> Role:
+        """A copy of ``role`` under a new name."""
+        params = {"project": self._project(project), "roleId": role}
+        body = {"name": name, "description": description}
+        return self._request(ApiRequest("POST", "/v1/role/duplicate", params=params, json=body, parse=_one(Role)))
+
+    def update_table(
+        self, role: str, permissions: TablePermissions | Mapping[str, Any], *, project: ProjectId | None = None
+    ) -> Role:
+        """Sets a role's permissions on one table (``permissions.table_name`` names it)."""
+        params = {"project": self._project(project), "role": role}
+        return self._request(
+            ApiRequest("PUT", "/v1/role/table", params=params, json=_to_dict(permissions), parse=_one(Role))
+        )
+
+    def matrix(self, *, project: ProjectId | None = None) -> RoleMatrix:
+        """Every role with its permissions on every table."""
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/role/matrix", params=params, parse=_one(RoleMatrix)))
+
+    def update_matrix(
+        self, roles: Iterable[RoleMatrixRoleUpdate | Mapping[str, Any]], *, project: ProjectId | None = None
+    ) -> RoleMatrix:
+        """Changes several roles at once; parts of a role left ``None`` keep their value."""
+        params = {"project": self._project(project)}
+        body = {"roles": [_to_dict(r) for r in roles]}
+        return self._request(ApiRequest("PUT", "/v1/role/matrix", params=params, json=body, parse=_one(RoleMatrix)))
+
+
+class Permissions(_Resource):
+    """The permissions that exist: ``/v1/permission/info``."""
+
+    def info(self) -> builtins.list[Permission]:
+        """Every permission with its name and description; matrix permission ids are positions in this list."""
+        return self._request(ApiRequest("GET", "/v1/permission/info", parse=_many(Permission)))
+
+
+# --------------------------------------------------------------------------------------------------- audit
+
+
+class Audit(_Resource):
+    """Change history and undo: ``/v1/logging`` (management application tokens only)."""
+
+    def schema(self, *, take: int = 10, offset: int = 0, project: ProjectId | None = None) -> AuditLog:
+        """Changes to the project's tables and fields, newest first."""
+        params = {"project": self._project(project), "take": take, "offset": offset}
+        return self._request(ApiRequest("GET", "/v1/logging/schema", params=params, parse=_one(AuditLog)))
+
+    def management(self, *, take: int = 10, offset: int = 0, project: ProjectId | None = None) -> AuditLog:
+        """Changes to the project's settings, roles and members, newest first."""
+        params = {"project": self._project(project), "take": take, "offset": offset}
+        return self._request(ApiRequest("GET", "/v1/logging/management", params=params, parse=_one(AuditLog)))
+
+    def rollback(self, transaction_id: str, *, force: bool = False, project: ProjectId | None = None) -> Any:
+        """Undoes the last schema transaction (the ``id`` of an :class:`~stellards.AuditEntry`)."""
+        params = {"project": self._project(project), "transactionId": transaction_id, "force": True if force else None}
+        return self._request(ApiRequest("PUT", "/v1/logging/rollback", params=params))
+
+
+# --------------------------------------------------------------------------------------------------- webhooks
+
+
+class Webhooks(_Resource):
+    """Webhooks: ``/v1/webhooks``. Verify deliveries with :func:`stellards.webhooks.verify_signature`."""
+
+    def list(self, *, project: ProjectId | None = None) -> builtins.list[Webhook]:
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/webhooks", params=params, parse=_many(Webhook)))
+
+    def get(self, webhook: int, *, project: ProjectId | None = None) -> Webhook:
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", f"/v1/webhooks/{int(webhook)}", params=params, parse=_one(Webhook)))
+
+    def create(
+        self,
+        url: str,
+        *,
+        events: Sequence[str] | None = None,
+        table_ids: Sequence[int] | None = None,
+        is_active: bool = True,
+        project: ProjectId | None = None,
+    ) -> WebhookWithSecret:
+        """Creates a webhook. The result holds its signing ``secret``: it is only shown now, so store it.
+
+        ``events``: e.g. ``["record.created", "record.updated"]`` (record events by default); ``table_ids``: only
+        these tables (all by default).
+        """
+        body = {"url": url, "events": list(events or []), "tableIds": list(table_ids or []), "isActive": is_active}
+        params = {"project": self._project(project)}
+        return self._request(
+            ApiRequest("POST", "/v1/webhooks", params=params, json=body, parse=_one(WebhookWithSecret))
+        )
+
+    def update(
+        self,
+        webhook: int,
+        *,
+        url: str | None = None,
+        events: Sequence[str] | None = None,
+        table_ids: Sequence[int] | None = None,
+        is_active: bool | None = None,
+        project: ProjectId | None = None,
+    ) -> Webhook:
+        """Changes a webhook; settings left out keep their value. Switching it on again clears its failure state."""
+        project_id = self._project(project)
+        if url is None or events is None or table_ids is None or is_active is None:
+            current = self.get(webhook, project=project_id)
+            url = current.url if url is None else url
+            events = current.events if events is None else events
+            table_ids = current.table_ids if table_ids is None else table_ids
+            is_active = current.is_active if is_active is None else is_active
+        body = {"url": url, "events": list(events), "tableIds": list(table_ids), "isActive": is_active}
+        return self._request(
+            ApiRequest(
+                "PUT", f"/v1/webhooks/{int(webhook)}", params={"project": project_id}, json=body, parse=_one(Webhook)
+            )
+        )
+
+    def delete(self, webhook: int, *, project: ProjectId | None = None) -> None:
+        params = {"project": self._project(project)}
+        self._request(ApiRequest("DELETE", f"/v1/webhooks/{int(webhook)}", params=params, parse=_none))
+
+    def test(self, webhook: int, *, project: ProjectId | None = None) -> WebhookDelivery:
+        """Sends a ``ping`` event to the webhook."""
+        params = {"project": self._project(project)}
+        return self._request(
+            ApiRequest("POST", f"/v1/webhooks/{int(webhook)}/test", params=params, parse=_one(WebhookDelivery))
+        )
+
+    def rotate_secret(self, webhook: int, *, project: ProjectId | None = None) -> WebhookWithSecret:
+        """A new signing secret. The old one stays valid until ``previous_secret_expires_at``."""
+        params = {"project": self._project(project)}
+        return self._request(
+            ApiRequest(
+                "POST", f"/v1/webhooks/{int(webhook)}/rotate-secret", params=params, parse=_one(WebhookWithSecret)
+            )
+        )
+
+    def deliveries(
+        self,
+        webhook: int,
+        *,
+        offset: int | None = None,
+        take: int | None = None,
+        project: ProjectId | None = None,
+    ) -> builtins.list[WebhookDelivery]:
+        """The webhook's recent deliveries, newest first."""
+        params = {"project": self._project(project), "offset": offset, "take": take}
+        return self._request(
+            ApiRequest("GET", f"/v1/webhooks/{int(webhook)}/deliveries", params=params, parse=_many(WebhookDelivery))
+        )
+
+    def redeliver(self, webhook: int, delivery: int, *, project: ProjectId | None = None) -> WebhookDelivery:
+        """Sends a delivery again."""
+        params = {"project": self._project(project)}
+        path = f"/v1/webhooks/{int(webhook)}/deliveries/{int(delivery)}/redeliver"
+        return self._request(ApiRequest("POST", path, params=params, parse=_one(WebhookDelivery)))
+
+
+# --------------------------------------------------------------------------------------------------- users
+
+
+class Users(_Resource):
+    """The signed-in user and the project's members: ``/v1/user``."""
+
+    def me(self) -> Account:
+        """The signed-in user."""
+        return self._request(ApiRequest("GET", "/v1/user", parse=_one(Account)))
+
+    def delete_me(self) -> None:
+        """Deletes the signed-in user's account. This can't be undone."""
+        self._request(ApiRequest("DELETE", "/v1/user", parse=_none))
+
+    def permissions(self, *, project: ProjectId | None = None) -> RolePermissions:
+        """What the signed-in user may do in the project."""
+        params = {"projectId": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/user/permissions", params=params, parse=_one(RolePermissions)))
+
+    def invite(self, email: str, role: str, *, allow_app_access: bool = False, project: ProjectId | None = None) -> Any:
+        """Invites ``email`` to the project with ``role`` (a role id)."""
+        body = {"email": email, "role": role, "allowAppAccess": allow_app_access}
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("POST", "/v1/user/invite", params=params, json=body))
+
+    def update_invitation(
+        self,
+        invitation: int,
+        *,
+        email: str,
+        role: str,
+        allow_app_access: bool = False,
+        project: ProjectId | None = None,
+    ) -> Any:
+        body = {"email": email, "role": role, "allowAppAccess": allow_app_access}
+        params = {"project": self._project(project), "id": invitation}
+        return self._request(ApiRequest("PUT", "/v1/user/invitation", params=params, json=body))
+
+    def revoke_invitation(self, invitation: int, *, project: ProjectId | None = None) -> None:
+        params = {"project": self._project(project), "id": invitation}
+        self._request(ApiRequest("DELETE", "/v1/user/revoke-invitation", params=params, parse=_none))
+
+    def update_access(
+        self, email: str, *, role: str, has_application_access: bool = False, project: ProjectId | None = None
+    ) -> Any:
+        """Changes a member's role and whether they may open the project in the management application."""
+        body = {"email": email, "role": role, "hasApplicationAccess": has_application_access}
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("PUT", "/v1/user/user-access", params=params, json=body))
+
+    def remove_access(self, email: str, *, project: ProjectId | None = None) -> None:
+        """Removes a member from the project."""
+        params = {"project": self._project(project), "email": email}
+        self._request(ApiRequest("DELETE", "/v1/user/remove-user-access", params=params, parse=_none))
+
+
+# --------------------------------------------------------------------------------------------------- applications
+
+
+class Applications(_Resource):
+    """Access tokens and OAuth clients of a project: ``/v1/application`` (management application tokens only)."""
+
+    def access_tokens(self, *, project: ProjectId | None = None) -> builtins.list[AccessToken]:
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/application/access-token", params=params, parse=_many(AccessToken)))
+
+    def create_access_token(
+        self,
+        name: str,
+        *,
+        role: str,
+        duration: int,
+        span: Any,
+        domain: str | None = None,
+        project: ProjectId | None = None,
+    ) -> CreatedAccessToken:
+        """A new access token valid for ``duration`` ``span`` units (:class:`~stellards.DurationUnit`).
+
+        The token itself is only returned now: store it.
+        """
+        body = {"name": name, "role": role, "domain": domain, "duration": duration, "span": _span(span)}
+        params = {"project": self._project(project)}
+        return self._request(
+            ApiRequest("POST", "/v1/application/access-token", params=params, json=body, parse=_one(CreatedAccessToken))
+        )
+
+    def update_access_token(
+        self,
+        access_token: str,
+        *,
+        name: str,
+        role: str,
+        duration: int,
+        span: Any,
+        domain: str | None = None,
+        project: ProjectId | None = None,
+    ) -> Any:
+        """Changes an access token's name, role or lifetime (the token value stays the same)."""
+        body = {
+            "accessTokenId": access_token,
+            "name": name,
+            "role": role,
+            "domain": domain,
+            "duration": duration,
+            "span": _span(span),
+        }
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("PUT", "/v1/application/access-token", params=params, json=body))
+
+    def delete_access_token(self, access_token: str, *, project: ProjectId | None = None) -> None:
+        params = {"project": self._project(project), "accessTokenId": access_token}
+        self._request(ApiRequest("DELETE", "/v1/application/access-token", params=params, parse=_none))
+
+    def regenerate_access_token(self, access_token: str, *, project: ProjectId | None = None) -> Tokens:
+        """A new value for an access token; the old value stops working."""
+        params = {"project": self._project(project)}
+        return self._request(
+            ApiRequest(
+                "POST",
+                "/v1/application/generate-jwt-token",
+                params=params,
+                json=str(access_token),
+                parse=Tokens.from_response,
+            )
+        )
+
+    def clients(self, *, project: ProjectId | None = None) -> builtins.list[OAuthClient]:
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/application/client", params=params, parse=_many(OAuthClient)))
+
+    def create_client(
+        self, name: str, *, role: str, redirect_urls: Sequence[str], project: ProjectId | None = None
+    ) -> OAuthClient:
+        """A new OAuth client. Its ``client_secret`` is only returned now: store it."""
+        body = {"name": name, "role": role, "redirectUrls": list(redirect_urls)}
+        params = {"project": self._project(project)}
+        return self._request(
+            ApiRequest("POST", "/v1/application/client", params=params, json=body, parse=_one(OAuthClient))
+        )
+
+    def update_client(
+        self,
+        client_id: str,
+        *,
+        name: str,
+        role: str,
+        redirect_urls: Sequence[str],
+        project: ProjectId | None = None,
+    ) -> OAuthClient:
+        body = {"clientId": client_id, "name": name, "role": role, "redirectUrls": list(redirect_urls)}
+        params = {"project": self._project(project)}
+        return self._request(
+            ApiRequest("PUT", "/v1/application/client", params=params, json=body, parse=_one(OAuthClient))
+        )
+
+    def delete_client(self, client_id: str, *, project: ProjectId | None = None) -> None:
+        params = {"project": self._project(project), "clientId": client_id}
+        self._request(ApiRequest("DELETE", "/v1/application/client", params=params, parse=_none))
+
+    def regenerate_client_secret(self, client_id: str, *, project: ProjectId | None = None) -> OAuthClient:
+        """A new client secret; the old one stops working."""
+        params = {"project": self._project(project)}
+        return self._request(
+            ApiRequest(
+                "POST",
+                "/v1/application/generate-new-secret",
+                params=params,
+                json=str(client_id),
+                parse=_one(OAuthClient),
+            )
+        )
+
+
+# --------------------------------------------------------------------------------------------------- tiers
+
+
+class ProjectTiers(_Resource):
+    """The project's subscription tier: ``/v1/project-tier``."""
+
+    def get(self, *, project: ProjectId | None = None) -> ProjectTier:
+        """The limits of the project's tier."""
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/project-tier", params=params, parse=_one(ProjectTier)))
+
+    def current(self, *, project: ProjectId | None = None) -> ProjectTier:
+        """What the project currently uses of its tier's limits."""
+        params = {"project": self._project(project)}
+        return self._request(ApiRequest("GET", "/v1/project-tier/current", params=params, parse=_one(ProjectTier)))
+
+
+# --------------------------------------------------------------------------------------------------- oauth
+
+
+class OAuth(_Resource):
+    """The OAuth token endpoints: ``/v1/oauth``. See also :mod:`stellards.oauth` for the authorization flow."""
+
+    def _client_credentials(self, client_id: str | None, client_secret: str | None) -> tuple[str, str]:
+        credentials = self._core.tokens.credentials
+        client_id = client_id or (credentials.client_id if credentials else None)
+        client_secret = client_secret or (credentials.client_secret if credentials else None)
+        if not client_id or not client_secret:
+            raise ValueError("pass client_id and client_secret, or create the client with oauth=OAuthCredentials(...)")
+        return str(client_id), client_secret
+
+    def exchange_code(
+        self, code: str, redirect_uri: str, *, client_id: str | None = None, client_secret: str | None = None
+    ) -> Tokens:
+        """Exchanges an authorization code for tokens (without changing the tokens this client uses)."""
+        cid, secret = self._client_credentials(client_id, client_secret)
+        form = {
+            "grant_type": "authorization_code",
+            "client_id": cid,
+            "client_secret": secret,
+            "code": code,
+            "redirect_uri": redirect_uri,
+        }
+        return self._request(
+            ApiRequest(
+                "POST", "/v1/oauth/token", form=form, parse=Tokens.from_response, unwrap=False, authenticated=False
+            )
+        )
+
+    def refresh(self) -> Tokens:
+        """Refreshes this client's access token now (normally it does so by itself) and returns the new tokens."""
+        tokens = self._core.refresh(force=True)
+        assert tokens is not None
+        return tokens
+
+    def revoke(
+        self,
+        refresh_token: str | None = None,
+        *,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+    ) -> None:
+        """Revokes a refresh token (this client's own when left out), e.g. when the user signs out."""
+        cid, secret = self._client_credentials(client_id, client_secret)
+        token = refresh_token or self._core.tokens.refresh_token
+        if not token:
+            raise ValueError("no refresh token to revoke")
+        body = {"refresh_token": token, "client_id": cid, "client_secret": secret}
+        self._request(ApiRequest("POST", "/v1/oauth/revoke", json=body, parse=_none, authenticated=False))
